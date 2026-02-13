@@ -87,7 +87,7 @@ jobs:
             -g ruby \
             -o ./docker-hub \
             --skip-validate-spec \
-            --additional-properties=gemName=docker-hub,moduleName=DockerHub,gemVersion=$VERSION,gemAuthor=Adam\ Ladachowski,gemHomepage=https://github.com/saiden-dev/docker-hub,gemLicense=MIT
+            --additional-properties=gemName=docker-hub,moduleName=DockerHub,gemVersion=$VERSION,gemAuthor=saiden-dev,gemAuthorEmail=dev@saiden.pl,gemHomepage=https://github.com/saiden-dev/docker-hub,gemLicense=MIT,gemSummary=Ruby\ client\ for\ Docker\ Hub\ API,gemDescription=Auto-generated\ Ruby\ client\ for\ Docker\ Hub\ API,gemRequiredRubyVersion=\>=\ 3.0,library=typhoeus
 
       - name: Build gem
         working-directory: ./docker-hub
