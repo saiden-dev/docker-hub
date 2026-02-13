@@ -1,0 +1,128 @@
+name: Publish to GitHub Packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to package (leave empty to use latest tag)'
+        required: false
+        type: string
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  check-package:
+    runs-on: ubuntu-latest
+    outputs:
+      should_publish: ${{ steps.check.outputs.should_publish }}
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION=$(git describe --tags --abbrev=0 | sed 's/^v//')
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Package version: $VERSION"
+
+      - name: Check if package version exists
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          PACKAGE_URL="https://api.github.com/users/${{ github.repository_owner }}/packages/rubygems/docker-hub/versions"
+
+          if curl -sL -H "Authorization: Bearer $GITHUB_TOKEN" "$PACKAGE_URL" | grep -q "\"name\":\"$VERSION\""; then
+            echo "Package version $VERSION already exists"
+            echo "should_publish=false" >> $GITHUB_OUTPUT
+          else
+            echo "Package version $VERSION does not exist"
+            echo "should_publish=true" >> $GITHUB_OUTPUT
+          fi
+
+  publish-package:
+    needs: check-package
+    if: needs.check-package.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+
+      - name: Checkout tag
+        run: |
+          git checkout "v${{ needs.check-package.outputs.version }}"
+
+      - name: Download OpenAPI spec and generate gem
+        run: |
+          VERSION="${{ needs.check-package.outputs.version }}"
+
+          curl -s "https://docs.docker.com/reference/api/hub/latest.yaml" -o openapi.yaml
+
+          wget -q https://repo1.maven.org/maven2/org/openapitools/openapi-generator-cli/7.2.0/openapi-generator-cli-7.2.0.jar -O openapi-generator-cli.jar
+
+          java -jar openapi-generator-cli.jar generate \
+            -i openapi.yaml \
+            -g ruby \
+            -o ./docker-hub \
+            --skip-validate-spec \
+            --additional-properties=gemName=docker-hub,moduleName=DockerHub,gemVersion=$VERSION,gemAuthor=Adam\ Ladachowski,gemHomepage=https://github.com/saiden-dev/docker-hub,gemLicense=MIT
+
+      - name: Build gem
+        working-directory: ./docker-hub
+        run: |
+          gem build docker-hub.gemspec
+
+      - name: Configure gem for GitHub Packages
+        working-directory: ./docker-hub
+        run: |
+          mkdir -p ~/.gem
+          cat > ~/.gem/credentials << EOF
+          ---
+          :github: Bearer ${{ secrets.GITHUB_TOKEN }}
+          EOF
+          chmod 0600 ~/.gem/credentials
+
+      - name: Publish to GitHub Packages
+        working-directory: ./docker-hub
+        run: |
+          VERSION="${{ needs.check-package.outputs.version }}"
+          gem push --key github --host https://rubygems.pkg.github.com/${{ github.repository_owner }} \
+            docker-hub-$VERSION.gem
+
+      - name: Summary
+        run: |
+          echo "## Package Published ✅" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Package:** docker-hub" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ needs.check-package.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Registry:** GitHub Packages" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Installation" >> $GITHUB_STEP_SUMMARY
+          echo '```ruby' >> $GITHUB_STEP_SUMMARY
+          echo "# In Gemfile" >> $GITHUB_STEP_SUMMARY
+          echo "source 'https://rubygems.pkg.github.com/${{ github.repository_owner }}' do" >> $GITHUB_STEP_SUMMARY
+          echo "  gem 'docker-hub', '${{ needs.check-package.outputs.version }}'" >> $GITHUB_STEP_SUMMARY
+          echo "end" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

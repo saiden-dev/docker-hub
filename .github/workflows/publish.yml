@@ -1,0 +1,173 @@
+name: Build and Publish Docker Hub Gem
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: 'Force build even if version unchanged'
+        required: false
+        type: boolean
+        default: false
+      version:
+        description: 'Override version (leave empty for auto)'
+        required: false
+        type: string
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.compare.outputs.should_build }}
+      gem_version: ${{ steps.fetch_version.outputs.version }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch Docker Hub API spec version
+        id: fetch_version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            GEM_VERSION="${{ inputs.version }}"
+          else
+            # Get API version from OpenAPI spec
+            API_VERSION=$(curl -s https://docs.docker.com/reference/api/hub/latest.yaml | grep -E "^  version:" | head -1 | awk '{print $2}' | tr -d '"')
+
+            # Add date suffix for uniqueness: e.g., 2-beta.2025.02.13
+            DATE_SUFFIX=$(date +%Y.%m.%d)
+            GEM_VERSION="${API_VERSION}.${DATE_SUFFIX}"
+          fi
+
+          echo "version=$GEM_VERSION" >> $GITHUB_OUTPUT
+          echo "Gem Version: $GEM_VERSION"
+
+      - name: Get last built version
+        id: last_version
+        run: |
+          LAST_VERSION=$(git tag -l 'v*' --sort=-v:refname | head -n 1 | sed 's/^v//')
+          if [ -z "$LAST_VERSION" ]; then
+            LAST_VERSION="0.0.0"
+          fi
+          echo "version=$LAST_VERSION" >> $GITHUB_OUTPUT
+          echo "Last built version: $LAST_VERSION"
+
+      - name: Compare versions
+        id: compare
+        run: |
+          GEM_VERSION="${{ steps.fetch_version.outputs.version }}"
+          LAST_VERSION="${{ steps.last_version.outputs.version }}"
+          FORCE_BUILD="${{ inputs.force_build }}"
+
+          if [ "$FORCE_BUILD" = "true" ]; then
+            echo "Force build requested"
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          elif [ "$GEM_VERSION" != "$LAST_VERSION" ]; then
+            echo "Version changed: $LAST_VERSION -> $GEM_VERSION"
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          else
+            echo "Version unchanged: $GEM_VERSION"
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          fi
+
+  build-and-publish:
+    needs: check-version
+    if: needs.check-version.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+
+      - name: Download OpenAPI spec
+        run: |
+          curl -s "https://docs.docker.com/reference/api/hub/latest.yaml" -o openapi.yaml
+          echo "Downloaded OpenAPI spec"
+
+      - name: Generate Ruby client with OpenAPI Generator
+        uses: openapi-generators/openapitools-generator-action@v1
+        with:
+          generator: ruby
+          openapi-file: openapi.yaml
+          command-args: >-
+            -o ./docker-hub
+            --skip-validate-spec
+            --additional-properties=gemName=docker-hub,moduleName=DockerHub,gemVersion=${{ needs.check-version.outputs.gem_version }},gemAuthor=Adam Ladachowski,gemAuthorEmail=adam.ladachowski@gmail.com,gemHomepage=https://github.com/saiden-dev/docker-hub,gemLicense=MIT
+
+      - name: Fix generated code for Ruby 3.x
+        working-directory: ./docker-hub
+        run: |
+          # Fix any regex issues in generated code
+          find . -name "*.rb" -exec sed -i 's/Regexp.new(\/\([^)]*\)\\\\\.\([^)]*\)\/)/Regexp.new("\1\\.\2")/g' {} \; || true
+
+      - name: Build gem
+        working-directory: ./docker-hub
+        run: |
+          gem build docker-hub.gemspec
+
+      - name: Configure Git
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+      - name: Commit generated code
+        run: |
+          git add docker-hub/
+          git commit -m "Generate Docker Hub gem v${{ needs.check-version.outputs.gem_version }}" || echo "No changes to commit"
+
+      - name: Create and push tag
+        run: |
+          VERSION="${{ needs.check-version.outputs.gem_version }}"
+          if ! git rev-parse "v$VERSION" >/dev/null 2>&1; then
+            git tag -a "v$VERSION" -m "Release v$VERSION"
+          fi
+          git push origin main
+          git push origin "v$VERSION" || echo "Tag already exists on remote"
+
+      - name: Configure RubyGems credentials via Trusted Publishing
+        uses: rubygems/configure-rubygems-credentials@v1.0.0
+
+      - name: Publish to RubyGems
+        working-directory: ./docker-hub
+        run: |
+          gem push docker-hub-${{ needs.check-version.outputs.gem_version }}.gem
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ needs.check-version.outputs.gem_version }}
+          name: Release v${{ needs.check-version.outputs.gem_version }}
+          body: |
+            Automated release of Docker Hub Ruby gem.
+
+            ## Changes
+            - Generated from OpenAPI spec: https://docs.docker.com/reference/api/hub/latest.yaml
+
+            ## Installation
+            ```ruby
+            gem 'docker-hub', '~> ${{ needs.check-version.outputs.gem_version }}'
+            ```
+
+            ## Usage
+            ```ruby
+            require 'docker-hub'
+
+            DockerHub.configure do |config|
+              config.access_token = ENV['DOCKER_HUB_TOKEN']
+            end
+
+            api = DockerHub::RepositoriesApi.new
+            repos = api.list_namespace_repositories('your-namespace')
+            ```
+          files: ./docker-hub/docker-hub-${{ needs.check-version.outputs.gem_version }}.gem
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
