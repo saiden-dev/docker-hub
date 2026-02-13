@@ -1,4 +1,4 @@
-name: Build and Publish Docker Hub Gem
+name: Build and Publish
 
 on:
   workflow_dispatch:
