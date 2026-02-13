@@ -127,6 +127,9 @@ jobs:
             --additional-properties="gemRequiredRubyVersion=>= 3.0" \
             --additional-properties=library=typhoeus
 
+      - name: Fix generated code
+        run: ruby scripts/fix_generated_code.rb
+
       - name: Build gem
         id: build
         working-directory: ./docker-hub
@@ -148,7 +151,7 @@ jobs:
 
       - name: Commit generated code and etag
         run: |
-          git add docker-hub/ .spec-etag
+          git add docker-hub/ .spec-etag scripts/
           git commit -m "Generate Docker Hub gem v${{ needs.check-spec.outputs.gem_version }}" || echo "No changes to commit"
 
       - name: Create and push tag
