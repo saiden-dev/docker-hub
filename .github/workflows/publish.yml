@@ -108,14 +108,24 @@ jobs:
           echo "Downloaded OpenAPI spec"
 
       - name: Generate Ruby client with OpenAPI Generator
-        uses: openapi-generators/openapitools-generator-action@v1
-        with:
-          generator: ruby
-          openapi-file: openapi.yaml
-          command-args: >-
-            -o ./docker-hub
-            --skip-validate-spec
-            --additional-properties=gemName=docker-hub,moduleName=DockerHub,gemVersion=${{ needs.check-spec.outputs.gem_version }},gemAuthor=saiden-dev,gemAuthorEmail=dev@saiden.pl,gemHomepage=https://github.com/saiden-dev/docker-hub,gemLicense=MIT,gemSummary=Ruby client for Docker Hub API,gemDescription=Auto-generated Ruby client for Docker Hub API. Manage repositories and organizations and access tokens.,gemRequiredRubyVersion=>= 3.0,library=typhoeus
+        run: |
+          wget -q https://repo1.maven.org/maven2/org/openapitools/openapi-generator-cli/7.2.0/openapi-generator-cli-7.2.0.jar -O openapi-generator-cli.jar
+          java -jar openapi-generator-cli.jar generate \
+            -i openapi.yaml \
+            -g ruby \
+            -o ./docker-hub \
+            --skip-validate-spec \
+            --additional-properties=gemName=docker-hub \
+            --additional-properties=moduleName=DockerHub \
+            --additional-properties=gemVersion=${{ needs.check-spec.outputs.gem_version }} \
+            --additional-properties=gemAuthor=saiden-dev \
+            --additional-properties=gemAuthorEmail=dev@saiden.pl \
+            --additional-properties=gemHomepage=https://github.com/saiden-dev/docker-hub \
+            --additional-properties=gemLicense=MIT \
+            --additional-properties="gemSummary=Ruby client for Docker Hub API" \
+            --additional-properties="gemDescription=Auto-generated Ruby client for Docker Hub API" \
+            --additional-properties="gemRequiredRubyVersion=>= 3.0" \
+            --additional-properties=library=typhoeus
 
       - name: Build gem
         working-directory: ./docker-hub
@@ -143,7 +153,7 @@ jobs:
           if ! git rev-parse "v$VERSION" >/dev/null 2>&1; then
             git tag -a "v$VERSION" -m "Release v$VERSION"
           fi
-          git push origin main
+          git push origin master
           git push origin "v$VERSION" || echo "Tag already exists on remote"
 
       - name: Configure RubyGems credentials via Trusted Publishing
