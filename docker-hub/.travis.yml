@@ -8,4 +8,4 @@ script:
   - bundle install --path vendor/bundle
   - bundle exec rspec
   - gem build docker-hub.gemspec
-  - gem install ./docker-hub-2-beta.1.gem
+  - gem install ./docker-hub-2-beta.2.gem

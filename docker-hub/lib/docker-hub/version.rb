@@ -11,5 +11,5 @@ OpenAPI Generator version: 7.2.0
 =end
 
 module DockerHub
-  VERSION = '2-beta.1'
+  VERSION = '2-beta.2'
 end
