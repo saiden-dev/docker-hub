@@ -137,11 +137,6 @@ module DockerHub
         invalid_properties.push('invalid value for "name", the character length must be greater than or equal to 2.')
       end
 
-      pattern = (/.*/)
-      if @name !~ pattern
-        invalid_properties.push("invalid value for \"name\", must conform to the pattern #{pattern}.")
-      end
-
       if @namespace.nil?
         invalid_properties.push('invalid value for "namespace", namespace cannot be nil.')
       end
@@ -164,7 +159,6 @@ module DockerHub
       return false if @name.nil?
       return false if @name.to_s.length > 255
       return false if @name.to_s.length < 2
-      return false if @name !~ (/.*/)
       return false if @namespace.nil?
       return false if !@description.nil? && @description.to_s.length > 100
       return false if !@full_description.nil? && @full_description.to_s.length > 25000
@@ -180,11 +174,6 @@ module DockerHub
 
       if name.to_s.length < 2
         fail ArgumentError, 'invalid value for "name", the character length must be greater than or equal to 2.'
-      end
-
-      pattern = (/.*/)
-      if name !~ pattern
-        fail ArgumentError, "invalid value for \"name\", must conform to the pattern #{pattern}."
       end
 
       @name = name

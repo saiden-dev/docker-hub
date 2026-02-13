@@ -109,7 +109,9 @@ jobs:
 
       - name: Generate Ruby client with OpenAPI Generator
         run: |
-          wget -q https://repo1.maven.org/maven2/org/openapitools/openapi-generator-cli/7.2.0/openapi-generator-cli-7.2.0.jar -O openapi-generator-cli.jar
+          # Pin generator version - fixes tested against this version
+          GENERATOR_VERSION=7.19.0
+          wget -q https://repo1.maven.org/maven2/org/openapitools/openapi-generator-cli/${GENERATOR_VERSION}/openapi-generator-cli-${GENERATOR_VERSION}.jar -O openapi-generator-cli.jar
           java -jar openapi-generator-cli.jar generate \
             -i openapi.yaml \
             -g ruby \
@@ -125,10 +127,12 @@ jobs:
             --additional-properties="gemSummary=Ruby client for Docker Hub API" \
             --additional-properties="gemDescription=Auto-generated Ruby client for Docker Hub API" \
             --additional-properties="gemRequiredRubyVersion=>= 3.0" \
-            --additional-properties=library=typhoeus
+            --additional-properties=library=typhoeus \
+            > /dev/null 2>&1
+          echo "Generated Ruby client v${{ needs.check-spec.outputs.gem_version }}"
 
       - name: Fix generated code
-        run: ruby scripts/fix_generated_code.rb
+        run: ruby scripts/fix_generated_code.rb --quiet
 
       - name: Build gem
         id: build

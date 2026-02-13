@@ -104,11 +104,6 @@ module DockerHub
         invalid_properties.push('invalid value for "slug", the character length must be greater than or equal to 1.')
       end
 
-      pattern = (/.*/)
-      if @slug !~ pattern
-        invalid_properties.push("invalid value for \"slug\", must conform to the pattern #{pattern}.")
-      end
-
       invalid_properties
     end
 
@@ -120,7 +115,6 @@ module DockerHub
       return false if @name.to_s.length < 1
       return false if @slug.nil?
       return false if @slug.to_s.length < 1
-      return false if @slug !~ (/.*/)
       true
     end
 
@@ -139,11 +133,6 @@ module DockerHub
     def slug=(slug)
       if slug.to_s.length < 1
         fail ArgumentError, 'invalid value for "slug", the character length must be greater than or equal to 1.'
-      end
-
-      pattern = (/.*/)
-      if slug !~ pattern
-        fail ArgumentError, "invalid value for \"slug\", must conform to the pattern #{pattern}."
       end
 
       @slug = slug

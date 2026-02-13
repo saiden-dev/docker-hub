@@ -80,11 +80,6 @@ module DockerHub
         invalid_properties.push('invalid value for "regex", regex cannot be nil.')
       end
 
-      pattern = (/.*/)
-      if @regex !~ pattern
-        invalid_properties.push("invalid value for \"regex\", must conform to the pattern #{pattern}.")
-      end
-
       invalid_properties
     end
 
@@ -93,18 +88,12 @@ module DockerHub
     def valid?
       warn '[DEPRECATED] the `valid?` method is obsolete'
       return false if @regex.nil?
-      return false if @regex !~ (/.*/)
       true
     end
 
     # Custom attribute writer method with validation
     # @param [Object] regex Value to be assigned
     def regex=(regex)
-      pattern = (/.*/)
-      if regex !~ pattern
-        fail ArgumentError, "invalid value for \"regex\", must conform to the pattern #{pattern}."
-      end
-
       @regex = regex
     end
 
