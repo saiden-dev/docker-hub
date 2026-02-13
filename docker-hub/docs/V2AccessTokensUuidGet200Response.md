@@ -1,0 +1,40 @@
+# DockerHub::V2AccessTokensUuidGet200Response
+
+## Properties
+
+| Name | Type | Description | Notes |
+| ---- | ---- | ----------- | ----- |
+| **uuid** | **String** |  | [optional] |
+| **client_id** | **String** |  | [optional] |
+| **creator_ip** | **String** |  | [optional] |
+| **creator_ua** | **String** |  | [optional] |
+| **created_at** | **String** |  | [optional] |
+| **last_used** | **String** |  | [optional] |
+| **generated_by** | **String** |  | [optional] |
+| **is_active** | **Boolean** |  | [optional] |
+| **token** | **String** |  | [optional] |
+| **token_label** | **String** |  | [optional] |
+| **scopes** | **Array&lt;String&gt;** |  | [optional] |
+| **expires_at** | **Time** |  | [optional] |
+
+## Example
+
+```ruby
+require 'docker-hub'
+
+instance = DockerHub::V2AccessTokensUuidGet200Response.new(
+  uuid: b30bbf97-506c-4ecd-aabc-842f3cb484fb,
+  client_id: HUB,
+  creator_ip: 127.0.0.1,
+  creator_ua: some user agent,
+  created_at: 2021-07-20T12:00:00.000000Z,
+  last_used: null,
+  generated_by: manual,
+  is_active: true,
+  token: ,
+  token_label: My read only token,
+  scopes: [repo:read],
+  expires_at: 2021-10-28T18:30:19.520861Z
+)
+```
+
