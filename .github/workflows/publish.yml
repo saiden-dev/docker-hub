@@ -128,9 +128,13 @@ jobs:
             --additional-properties=library=typhoeus
 
       - name: Build gem
+        id: build
         working-directory: ./docker-hub
         run: |
           gem build docker-hub.gemspec
+          GEM_FILE=$(ls docker-hub-*.gem)
+          echo "gem_file=$GEM_FILE" >> $GITHUB_OUTPUT
+          echo "Built: $GEM_FILE"
 
       - name: Update spec etag
         run: |
@@ -162,7 +166,7 @@ jobs:
       - name: Publish to RubyGems
         working-directory: ./docker-hub
         run: |
-          gem push docker-hub-${{ needs.check-spec.outputs.gem_version }}.gem
+          gem push ${{ steps.build.outputs.gem_file }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
@@ -194,6 +198,6 @@ jobs:
 
             ---
             Generated from [Docker Hub OpenAPI spec](${{ env.SPEC_URL }})
-          files: ./docker-hub/docker-hub-${{ needs.check-spec.outputs.gem_version }}.gem
+          files: ./docker-hub/${{ steps.build.outputs.gem_file }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
