@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       force_build:
-        description: 'Force build even if version unchanged'
+        description: 'Force build even if spec unchanged'
         required: false
         type: boolean
         default: false
@@ -13,12 +13,16 @@ on:
         required: false
         type: string
 
+env:
+  SPEC_URL: https://docs.docker.com/reference/api/hub/latest.yaml
+
 jobs:
-  check-version:
+  check-spec:
     runs-on: ubuntu-latest
     outputs:
-      should_build: ${{ steps.compare.outputs.should_build }}
-      gem_version: ${{ steps.fetch_version.outputs.version }}
+      should_build: ${{ steps.check.outputs.should_build }}
+      gem_version: ${{ steps.version.outputs.gem_version }}
+      api_version: ${{ steps.version.outputs.api_version }}
 
     steps:
       - name: Checkout repository
@@ -26,54 +30,64 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Fetch Docker Hub API spec version
-        id: fetch_version
+      - name: Check for spec changes via etag
+        id: check
         run: |
-          if [ -n "${{ inputs.version }}" ]; then
-            GEM_VERSION="${{ inputs.version }}"
-          else
-            # Get API version from OpenAPI spec
-            API_VERSION=$(curl -s https://docs.docker.com/reference/api/hub/latest.yaml | grep -E "^  version:" | head -1 | awk '{print $2}' | tr -d '"')
+          # Get current etag from Docker Hub spec
+          ETAG=$(curl -sI "$SPEC_URL" | grep -i "^etag:" | awk '{print $2}' | tr -d '"\r')
+          echo "Current etag: $ETAG"
 
-            # Add date suffix for uniqueness: e.g., 2-beta.2025.02.13
-            DATE_SUFFIX=$(date +%Y.%m.%d)
-            GEM_VERSION="${API_VERSION}.${DATE_SUFFIX}"
+          # Get last known etag from repo
+          LAST_ETAG=""
+          if [ -f .spec-etag ]; then
+            LAST_ETAG=$(cat .spec-etag)
           fi
+          echo "Last etag: $LAST_ETAG"
 
-          echo "version=$GEM_VERSION" >> $GITHUB_OUTPUT
-          echo "Gem Version: $GEM_VERSION"
-
-      - name: Get last built version
-        id: last_version
-        run: |
-          LAST_VERSION=$(git tag -l 'v*' --sort=-v:refname | head -n 1 | sed 's/^v//')
-          if [ -z "$LAST_VERSION" ]; then
-            LAST_VERSION="0.0.0"
-          fi
-          echo "version=$LAST_VERSION" >> $GITHUB_OUTPUT
-          echo "Last built version: $LAST_VERSION"
-
-      - name: Compare versions
-        id: compare
-        run: |
-          GEM_VERSION="${{ steps.fetch_version.outputs.version }}"
-          LAST_VERSION="${{ steps.last_version.outputs.version }}"
+          # Determine if we should build
           FORCE_BUILD="${{ inputs.force_build }}"
-
           if [ "$FORCE_BUILD" = "true" ]; then
             echo "Force build requested"
             echo "should_build=true" >> $GITHUB_OUTPUT
-          elif [ "$GEM_VERSION" != "$LAST_VERSION" ]; then
-            echo "Version changed: $LAST_VERSION -> $GEM_VERSION"
+          elif [ -z "$LAST_ETAG" ]; then
+            echo "No previous etag found - first build"
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          elif [ "$ETAG" != "$LAST_ETAG" ]; then
+            echo "Spec changed: $LAST_ETAG -> $ETAG"
             echo "should_build=true" >> $GITHUB_OUTPUT
           else
-            echo "Version unchanged: $GEM_VERSION"
+            echo "Spec unchanged"
             echo "should_build=false" >> $GITHUB_OUTPUT
           fi
 
+          echo "etag=$ETAG" >> $GITHUB_OUTPUT
+
+      - name: Determine gem version
+        id: version
+        if: steps.check.outputs.should_build == 'true'
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            GEM_VERSION="${{ inputs.version }}"
+            API_VERSION="${{ inputs.version }}"
+          else
+            # Get API version from OpenAPI spec
+            API_VERSION=$(curl -s "$SPEC_URL" | grep -E "^  version:" | head -1 | awk '{print $2}' | tr -d '"')
+
+            # Count existing tags with this API version to create incremental releases
+            # e.g., 2-beta.1, 2-beta.2, etc.
+            EXISTING_TAGS=$(git tag -l "v${API_VERSION}.*" | wc -l | tr -d ' ')
+            NEXT_RELEASE=$((EXISTING_TAGS + 1))
+            GEM_VERSION="${API_VERSION}.${NEXT_RELEASE}"
+          fi
+
+          echo "api_version=$API_VERSION" >> $GITHUB_OUTPUT
+          echo "gem_version=$GEM_VERSION" >> $GITHUB_OUTPUT
+          echo "API Version: $API_VERSION"
+          echo "Gem Version: $GEM_VERSION"
+
   build-and-publish:
-    needs: check-version
-    if: needs.check-version.outputs.should_build == 'true'
+    needs: check-spec
+    if: needs.check-spec.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -90,7 +104,7 @@ jobs:
 
       - name: Download OpenAPI spec
         run: |
-          curl -s "https://docs.docker.com/reference/api/hub/latest.yaml" -o openapi.yaml
+          curl -s "$SPEC_URL" -o openapi.yaml
           echo "Downloaded OpenAPI spec"
 
       - name: Generate Ruby client with OpenAPI Generator
@@ -101,32 +115,31 @@ jobs:
           command-args: >-
             -o ./docker-hub
             --skip-validate-spec
-            --additional-properties=gemName=docker-hub,moduleName=DockerHub,gemVersion=${{ needs.check-version.outputs.gem_version }},gemAuthor=Adam Ladachowski,gemAuthorEmail=adam.ladachowski@gmail.com,gemHomepage=https://github.com/saiden-dev/docker-hub,gemLicense=MIT
-
-      - name: Fix generated code for Ruby 3.x
-        working-directory: ./docker-hub
-        run: |
-          # Fix any regex issues in generated code
-          find . -name "*.rb" -exec sed -i 's/Regexp.new(\/\([^)]*\)\\\\\.\([^)]*\)\/)/Regexp.new("\1\\.\2")/g' {} \; || true
+            --additional-properties=gemName=docker-hub,moduleName=DockerHub,gemVersion=${{ needs.check-spec.outputs.gem_version }},gemAuthor=Adam Ladachowski,gemAuthorEmail=adam.ladachowski@gmail.com,gemHomepage=https://github.com/saiden-dev/docker-hub,gemLicense=MIT
 
       - name: Build gem
         working-directory: ./docker-hub
         run: |
           gem build docker-hub.gemspec
 
+      - name: Update spec etag
+        run: |
+          curl -sI "$SPEC_URL" | grep -i "^etag:" | awk '{print $2}' | tr -d '"\r' > .spec-etag
+          echo "Updated .spec-etag: $(cat .spec-etag)"
+
       - name: Configure Git
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
 
-      - name: Commit generated code
+      - name: Commit generated code and etag
         run: |
-          git add docker-hub/
-          git commit -m "Generate Docker Hub gem v${{ needs.check-version.outputs.gem_version }}" || echo "No changes to commit"
+          git add docker-hub/ .spec-etag
+          git commit -m "Generate Docker Hub gem v${{ needs.check-spec.outputs.gem_version }}" || echo "No changes to commit"
 
       - name: Create and push tag
         run: |
-          VERSION="${{ needs.check-version.outputs.gem_version }}"
+          VERSION="${{ needs.check-spec.outputs.gem_version }}"
           if ! git rev-parse "v$VERSION" >/dev/null 2>&1; then
             git tag -a "v$VERSION" -m "Release v$VERSION"
           fi
@@ -139,22 +152,22 @@ jobs:
       - name: Publish to RubyGems
         working-directory: ./docker-hub
         run: |
-          gem push docker-hub-${{ needs.check-version.outputs.gem_version }}.gem
+          gem push docker-hub-${{ needs.check-spec.outputs.gem_version }}.gem
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v${{ needs.check-version.outputs.gem_version }}
-          name: Release v${{ needs.check-version.outputs.gem_version }}
+          tag_name: v${{ needs.check-spec.outputs.gem_version }}
+          name: Release v${{ needs.check-spec.outputs.gem_version }}
           body: |
-            Automated release of Docker Hub Ruby gem.
+            Docker Hub Ruby gem v${{ needs.check-spec.outputs.gem_version }}
 
-            ## Changes
-            - Generated from OpenAPI spec: https://docs.docker.com/reference/api/hub/latest.yaml
+            ## API Version
+            Based on Docker Hub API `${{ needs.check-spec.outputs.api_version }}`
 
             ## Installation
             ```ruby
-            gem 'docker-hub', '~> ${{ needs.check-version.outputs.gem_version }}'
+            gem 'docker-hub', '~> ${{ needs.check-spec.outputs.gem_version }}'
             ```
 
             ## Usage
@@ -168,6 +181,9 @@ jobs:
             api = DockerHub::RepositoriesApi.new
             repos = api.list_namespace_repositories('your-namespace')
             ```
-          files: ./docker-hub/docker-hub-${{ needs.check-version.outputs.gem_version }}.gem
+
+            ---
+            Generated from [Docker Hub OpenAPI spec](${{ env.SPEC_URL }})
+          files: ./docker-hub/docker-hub-${{ needs.check-spec.outputs.gem_version }}.gem
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
